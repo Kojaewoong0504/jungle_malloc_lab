@@ -1,52 +1,58 @@
 #####################################################################
 # CS:APP Malloc Lab
-# Handout files for students
-#
-# Copyright (c) 2002, R. Bryant and D. O'Hallaron, All rights reserved.
-# May not be used, modified, or copied without permission.
-#
+# 학생용 핸드아웃 파일
+# 저작권 (c) 2002, R. Bryant and D. O'Hallaron, 모든 권리 보유.
+# 허가 없이 사용, 수정, 복사할 수 없습니다.
 ######################################################################
 
+
+
 ***********
-Main Files:
+주요 파일:
 ***********
 
-mm.{c,h}	
-	Your solution malloc package. mm.c is the file that you
-	will be handing in, and is the only file you should modify.
+mm.{c,h}
+	당신이 구현해야 할 malloc 패키지입니다.
+	mm.c 파일이 제출 대상이며, 수정이 허용된 유일한 파일입니다.
 
-mdriver.c	
-	The malloc driver that tests your mm.c file
+mdriver.c
+	당신의 mm.c를 테스트하는 malloc 드라이버입니다.
 
 short{1,2}-bal.rep
-	Two tiny tracefiles to help you get started. 
+	시작을 돕기 위한 작은 크기의 트레이스 파일 두 개입니다.
 
-Makefile	
-	Builds the driver
+Makefile
+	드라이버를 빌드하기 위한 메이크파일입니다.
 
 **********************************
-Other support files for the driver
+드라이버를 지원하는 기타 파일들
 **********************************
 
-config.h	Configures the malloc lab driver
-fsecs.{c,h}	Wrapper function for the different timer packages
-clock.{c,h}	Routines for accessing the Pentium and Alpha cycle counters
-fcyc.{c,h}	Timer functions based on cycle counters
-ftimer.{c,h}	Timer functions based on interval timers and gettimeofday()
-memlib.{c,h}	Models the heap and sbrk function
+config.h: malloc lab 드라이버의 설정 파일
+
+fsecs.{c,h}: 다양한 타이머 패키지를 위한 래퍼 함수
+
+clock.{c,h}: Pentium 및 Alpha 사이클 카운터 접근 함수
+
+fcyc.{c,h}: 사이클 카운터 기반 타이머 함수
+
+ftimer.{c,h}: gettimeofday()와 인터벌 타이머 기반 타이머 함수
+
+memlib.{c,h}: heap과 sbrk 함수를 모델링한 함수들
+
 
 *******************************
-Building and running the driver
+드라이버 빌드 및 실행 방법
 *******************************
-To build the driver, type "make" to the shell.
+드라이버를 빌드하려면, 쉘에서 다음 명령어를 입력하세요: make
 
-To run the driver on a tiny test trace:
+작은 테스트 트레이스를 실행하려면:
 
 	unix> mdriver -V -f short1-bal.rep
 
-The -V option prints out helpful tracing and summary information.
+-V 옵션은 추적(trace) 및 요약 정보를 출력합니다.
 
-To get a list of the driver flags:
+드라이버의 전체 옵션 목록을 보려면:
 
 	unix> mdriver -h
 
