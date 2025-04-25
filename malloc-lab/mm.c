@@ -63,7 +63,7 @@ p가 가리키는 위치에 저장된 4바이트 값을 가져오는 함수/메�
 
 /* 주어진 블록 ptr bp에 대해 다음 블록과 이전 블록의 주소를 계산한다*/
 #define NEXT_BLKP(bp) ((char *)(bp) + GET_SIZE(((char *)(bp) - WSIZE)))
-#define PREV_BLKP(bp) ((char *)(bp) - GET_SIZE(((char *)(bp) - WSIZE)))
+#define PREV_BLKP(bp) ((char *)(bp) - GET_SIZE(((char *)(bp) - DSIZE)))
 
 /* single word (4) or double word (8) alignment 
     정렬기준이 8바이트임을 나타낸다.
@@ -188,6 +188,7 @@ static void *find_fit(size_t asize){
         if (!GET_ALLOC(HDRP(bp)) && (GET_SIZE(HDRP(bp)) >= asize)){ 
             return bp;
         }
+        bp = NEXT_BLKP(bp);
     }
     
     return NULL;
