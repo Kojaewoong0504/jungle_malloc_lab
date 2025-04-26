@@ -22,7 +22,7 @@ team_t team = {
 #define WSIZE 8             // word size
 #define DSIZE 16             // double word size
 #define CHUNKSIZE (1 << 12) // 힙 확장을 위한 기본 크기 (= 초기 빈 블록의 크기)
-#define SEGREGATED_SIZE (12) // segregated list의 class 개수
+#define SEGREGATED_SIZE (16) // segregated list의 class 개수
 
 /* 가용 리스트를 접근/순회하는 데 사용할 매크로 */
 #define MAX(x, y) (x > y ? x : y)
@@ -108,26 +108,52 @@ void mm_free(void *bp)
 // `기존 메모리 블록의 포인터`, `새로운 크기`
 void *mm_realloc(void *ptr, size_t size)
 {
-    if (ptr == NULL) // 포인터가 NULL인 경우 할당만 수행
+    if (ptr == NULL)
         return mm_malloc(size);
-    if (size <= 0) // size가 0인 경우 메모리 반환만 수행
-    {
+
+    if (size == 0) {
         mm_free(ptr);
-        return 0;
+        return NULL;
     }
 
-    void *newptr = mm_malloc(size); // 새로 할당한 블록의 포인터
-    if (newptr == NULL)
-        return NULL; // 할당 실패
+    size_t old_size = GET_SIZE(HDRP(ptr));
+    size_t new_size = ALIGN(size + DSIZE); // header + footer 고려해서 align
 
-    size_t copySize = GET_SIZE(HDRP(ptr)) - DSIZE; // payload만큼 복사
-    if (size < copySize)                           // 기존 사이즈가 새 크기보다 더 크면
-        copySize = size;                           // size로 크기 변경 (기존 메모리 블록보다 작은 크기에 할당하면, 일부 데이터만 복사)
+    if (new_size <= old_size) {
+        // 요청한 크기가 현재 블록보다 작거나 같으면 그대로 사용
+        return ptr;
+    }
 
-    memcpy(newptr, ptr, copySize); // 새 블록으로 데이터 복사
-    mm_free(ptr);                  // 기존 블록 해제
-    return newptr;
+    void *next = NEXT_BLKP(ptr);
+
+    // 다음 블록이 free이고, 합쳤을 때 new_size 이상이면
+    if (!GET_ALLOC(HDRP(next)) && (old_size + GET_SIZE(HDRP(next))) >= new_size) {
+        size_t next_size = GET_SIZE(HDRP(next));
+
+        // **free_list에서 다음 블록 제거**
+        splice_free_block(next);
+
+        // **헤더, 푸터 수정**
+        PUT(HDRP(ptr), PACK(old_size + next_size, 1));
+        PUT(FTRP(ptr), PACK(old_size + next_size, 1));
+
+        return ptr;
+    }
+
+    // 만약 합칠 수 없다면 새로 malloc + 복사 + free
+    void *new_ptr = mm_malloc(size);
+    if (new_ptr == NULL)
+        return NULL;
+
+    size_t copySize = old_size - DSIZE; // 실제 payload 부분만 복사
+    if (size < copySize)
+        copySize = size;
+    memcpy(new_ptr, ptr, copySize);
+
+    mm_free(ptr);
+    return new_ptr;
 }
+
 
 static void *extend_heap(size_t words)
 {
@@ -189,20 +215,20 @@ static void *coalesce(void *bp)
 static void *find_fit(size_t asize)
 {
     int class = get_class(asize);
-    void *bp = GET_ROOT(class);
-    while (class < SEGREGATED_SIZE) // 현재 탐색하는 클래스가 범위 안에 있는 동안 반복
+    void *bp;
+
+    while (class < SEGREGATED_SIZE)
     {
-        bp = GET_ROOT(class);
-        while (bp != NULL)
-        {
-            if ((asize <= GET_SIZE(HDRP(bp)))) // 적합한 사이즈의 블록을 찾으면 반환
-                return bp;
-            bp = GET_SUCC(bp); // 다음 가용 블록으로 이동
+        for (bp = GET_ROOT(class); bp != NULL; bp = GET_SUCC(bp)) {
+            if (GET_SIZE(HDRP(bp)) >= asize)
+                return bp; // 처음 맞는 것 바로 리턴
         }
-        class += 1;
+        class++;
     }
     return NULL;
 }
+
+
 
 static void place(void *bp, size_t asize)
 {
@@ -255,13 +281,10 @@ static void add_free_block(void *bp)
         return;
     }
 
-    while (GET_SIZE(HDRP(currentp)) < GET_SIZE(HDRP(bp)))
-    {
-        if (GET_SUCC(currentp) == NULL || GET_SIZE(HDRP(currentp)) > GET_SIZE(HDRP(bp)))
-            break;
+    while (GET_SUCC(currentp) != NULL && GET_SIZE(HDRP(GET_SUCC(currentp))) < GET_SIZE(HDRP(bp))) {
         currentp = GET_SUCC(currentp);
     }
-
+    
     GET_SUCC(bp) = GET_SUCC(currentp);
     GET_SUCC(currentp) = bp;
     GET_PRED(bp) = currentp;
@@ -271,19 +294,11 @@ static void add_free_block(void *bp)
 }
 
 static int get_class(size_t size){
-    if (size < 16)
-        return 0;
-    
-    size_t class_sizes[SEGREGATED_SIZE];
-    class_sizes[0] = 16;
-
-    for (int i = 0; i < SEGREGATED_SIZE; i++){
-        if (i != 0){
-            class_sizes[i] = class_sizes[i - 1] << 1;
-        }
-        if (size <= class_sizes[i]){
-            return i;
-        }
+    int class = 0;
+    size >>= 4; // 최소 16부터 시작 (DSIZE)
+    while (size > 1 && class < SEGREGATED_SIZE - 1) {
+        size >>= 1;
+        class++;
     }
-    return SEGREGATED_SIZE-1;
+    return class;
 }
