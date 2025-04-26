@@ -26,8 +26,8 @@ team_t team = {
 /* 가용 리스트를 접근/순회하는 데 사용할 매크로 */
 #define MAX(x, y) (x > y ? x : y)
 #define PACK(size, alloc) (size | alloc)                              // size와 할당 비트를 결합, header와 footer에 저장할 값
-#define GET(p) (*(unsigned int *)(p))                                 // p가 참조하는 워드 반환 (포인터라서 직접 역참조 불가능 -> 타입 캐스팅)
-#define PUT(p, val) (*(unsigned int *)(p) = (unsigned int)(val))      // p에 val 저장
+#define GET(p) (*(unsigned long *)(p))                                 // p가 참조하는 워드 반환 (포인터라서 직접 역참조 불가능 -> 타입 캐스팅)
+#define PUT(p, val) (*(unsigned long *)(p) = (unsigned long)(val))      // p에 val 저장
 #define GET_SIZE(p) (GET(p) & ~0x7)                                   // 사이즈 (~0x7: ...11111000, '&' 연산으로 뒤에 세자리 없어짐)
 #define GET_ALLOC(p) (GET(p) & 0x1)                                   // 할당 상태
 #define HDRP(bp) ((char *)(bp)-WSIZE)                                 // Header 포인터
@@ -38,32 +38,39 @@ team_t team = {
 #define GET_SUCC(bp) (*(void **)((char *)(bp) + WSIZE)) // 다음 가용 블록의 주소
 #define GET_PRED(bp) (*(void **)(bp))                   // 이전 가용 블록의 주소
 
-static char *free_listp; // 가용 리스트의 맨 앞 블록의 bp
+/* 분리 가용 리스트 */
+#define SEGREGATED_SIZE 16
+
+/* 분리 가용 리스트의 루트*/
+#define GET_ROOT(class) (*(void **)((char *)(heap_listp) + (WSIZE * class)))
+
+static char *heap_listp; // 가용 리스트의 맨 앞 블록의 bp
 static void *extend_heap(size_t words);
 static void *coalesce(void *bp);
 static void *find_fit(size_t asize);
 static void place(void *bp, size_t asize);
-
+static int get_class(size_t size);
 static void splice_free_block(void *bp); // 가용 리스트에서 제거
 static void add_free_block(void *bp);    // 가용 리스트에 추가
 
 int mm_init(void)
 {
     // 초기 힙 생성
-    if ((free_listp = mem_sbrk(8 * WSIZE)) == (void *)-1) // 8워드 크기의 힙 생성, free_listp에 힙의 시작 주소값 할당(가용 블록만 추적)
+    if ((heap_listp = mem_sbrk((SEGREGATED_SIZE + 4) * WSIZE)) == (void *)-1) // 8워드 크기의 힙 생성, free_listp에 힙의 시작 주소값 할당(가용 블록만 추적)
         return -1;
-    PUT(free_listp, 0);                                // 정렬 패딩
-    PUT(free_listp + (1 * WSIZE), PACK(2 * WSIZE, 1)); // 프롤로그 Header
-    PUT(free_listp + (2 * WSIZE), PACK(2 * WSIZE, 1)); // 프롤로그 Footer
-    PUT(free_listp + (3 * WSIZE), PACK(4 * WSIZE, 0)); // 첫 가용 블록의 헤더
-    PUT(free_listp + (4 * WSIZE), NULL);               // 이전 가용 블록의 주소
-    PUT(free_listp + (5 * WSIZE), NULL);               // 다음 가용 블록의 주소
-    PUT(free_listp + (6 * WSIZE), PACK(4 * WSIZE, 0)); // 첫 가용 블록의 푸터
-    PUT(free_listp + (7 * WSIZE), PACK(0, 1));         // 에필로그 Header: 프로그램이 할당한 마지막 블록의 뒤에 위치하며, 블록이 할당되지 않은 상태를 나타냄
+    PUT(heap_listp, 0);                                // 정렬 패딩
+    PUT(heap_listp + (1 * WSIZE), PACK((SEGREGATED_SIZE + 2) * WSIZE, 1));
 
-    free_listp += (4 * WSIZE); // 첫번째 가용 블록의 bp
+    for (int i = 0; i < SEGREGATED_SIZE; i++)
+        PUT(heap_listp + ((2 + i) * WSIZE), NULL);
+    PUT(heap_listp + ((SEGREGATED_SIZE + 2) * WSIZE), PACK((SEGREGATED_SIZE + 2) * WSIZE, 1)); // 프롤로그 Footer
+    PUT(heap_listp + ((SEGREGATED_SIZE + 3) * WSIZE), PACK(0, 1));                             // 에필로그 Header: 프로그램이 할당한 마지막 블록의 뒤에 위치
+    
+    heap_listp += (2 * WSIZE); // 첫번째 가용 블록의 bp
 
     // 힙을 CHUNKSIZE bytes로 확장
+    if (extend_heap(4) == NULL)
+        return -1;
     if (extend_heap(CHUNKSIZE / WSIZE) == NULL)
         return -1;
 
@@ -200,13 +207,18 @@ static void *coalesce(void *bp)
 
 static void *find_fit(size_t asize)
 {
-    void *bp = free_listp;
-    while (bp != NULL) // 다음 가용 블럭이 있는 동안 반복
-    {
-        if ((asize <= GET_SIZE(HDRP(bp)))) // 적합한 사이즈의 블록을 찾으면 반환
-            return bp;
-        bp = GET_SUCC(bp); // 다음 가용 블록으로 이동
-    }
+    int class = get_class(asize);
+    void *bp = GET_ROOT(class);
+    while (class < SEGREGATED_SIZE){
+        bp = GET_ROOT(class);
+        while (bp != NULL) // 다음 가용 블럭이 있는 동안 반복
+        {
+            if ((asize <= GET_SIZE(HDRP(bp)))) // 적합한 사이즈의 블록을 찾으면 반환
+                return bp;
+            bp = GET_SUCC(bp); // 다음 가용 블록으로 이동
+        }
+        class += 1;
+    } 
     return NULL;
 }
 
@@ -235,9 +247,10 @@ static void place(void *bp, size_t asize)
 // 가용 리스트에서 bp에 해당하는 블록을 제거하는 함수
 static void splice_free_block(void *bp)
 {
-    if (bp == free_listp) // 분리하려는 블록이 free_list 맨 앞에 있는 블록이면 (이전 블록이 없음)
+    int class = get_class(GET_SIZE(HDRP(bp)));
+    if (bp == GET_ROOT(class)) // 분리하려는 블록이 free_list 맨 앞에 있는 블록이면
     {
-        free_listp = GET_SUCC(free_listp); // 다음 블록을 루트로 변경
+        GET_ROOT(class) = GET_SUCC(GET_ROOT(class)); // 다음 블록을 루트로 변경
         return;
     }
     // 이전 블록의 SUCC을 다음 가용 블록으로 연결
@@ -250,8 +263,27 @@ static void splice_free_block(void *bp)
 // 가용 리스트의 맨 앞에 현재 블록을 추가하는 함수
 static void add_free_block(void *bp)
 {
-    GET_SUCC(bp) = free_listp;     // bp의 SUCC은 루트가 가리키던 블록
-    if (free_listp != NULL)        // free list에 블록이 존재했을 경우만
-        GET_PRED(free_listp) = bp; // 루트였던 블록의 PRED를 추가된 블록으로 연결
-    free_listp = bp;               // 루트를 현재 블록으로 변경
+    int class = get_class(GET_SIZE(HDRP(bp)));
+    GET_SUCC(bp) = GET_ROOT(class);     // bp의 SUCC은 루트가 가리키던 블록
+    if (GET_ROOT(class) != NULL)        // free list에 블록이 존재했을 경우만
+        GET_PRED(GET_ROOT(class)) = bp; // 루트였던 블록의 PRED를 추가된 블록으로 연결
+    GET_ROOT(class) = bp;               // 루트를 현재 블록으로 변경
+}
+
+static int get_class(size_t size){
+    if (size < 16)
+        return 0;
+    
+    size_t class_sizes[SEGREGATED_SIZE];
+    class_sizes[0] = 16;
+
+    for (int i = 0; i < SEGREGATED_SIZE; i++){
+        if (i != 0){
+            class_sizes[i] = class_sizes[i - 1] << 1;
+        }
+        if (size <= class_sizes[i]){
+            return i;
+        }
+    }
+    return SEGREGATED_SIZE-1;
 }
